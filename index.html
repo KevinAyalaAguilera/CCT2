@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Procesador CCT2</title>
+    <link rel="stylesheet" href="CCT2.css">
+</head>
+<body>
+
+    <h1>Procesador CCT2</h1>
+
+    <label>Valor entrega:
+        <input type="number" step="0.01" id="entregaInput" value="0.09">
+    </label>
+    <br>
+    <label>Valor montaje:
+        <input type="number" step="0.01" id="montajeInput" value="0.14">
+    </label>
+
+    <h3>Subir Archivos Excel</h3>
+    <input type="file" id="file1" accept=".xlsx">
+    <br><br>
+    <input type="file" id="file2" accept=".xlsx">
+    <br><br>
+
+    <button id="processBtn">Procesar</button>
+
+    <script src="xlsx.full.min.js"></script>
+    <script src="CCT2.js"></script>
+</body>
+</html>
