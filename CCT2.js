@@ -1,5 +1,5 @@
-let entrega = 0.09;
-let montaje = 0.14;
+let entrega = 0.05;
+let montaje = 0.105;
 
 // Actualizar valores desde inputs
 document.getElementById("entregaInput").addEventListener("input", (e) => {
