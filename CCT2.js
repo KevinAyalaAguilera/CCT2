@@ -80,7 +80,8 @@ function processFiles(data1, data2) {
             "Categoría": row["Categoría"],
             "Importe neto": importeNeto,
             "Tarifa unit.": tarifaRedondeada,
-            "Total": totalRedondeado
+            "Total": totalRedondeado,
+            "Estado": row["Estado"]
         };
     });
 
