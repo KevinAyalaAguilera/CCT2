@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Transacciones de la cuenta del cliente</title>
+  <style>
+    :root{font-family:Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial;}
+    body{margin:0;padding:18px;background:#f6f8fb;color:#0b1220}
+    header{display:flex;align-items:center;gap:12px}
+    h1{margin:0;font-size:20px}
+
+    .card{background:#fff;border-radius:10px;padding:12px;box-shadow:0 6px 18px rgba(12,20,40,0.06);margin-top:12px}
+    input[type=file]{display:block}
+    .specialcard{background:#fff;border-radius:10px;padding:12px;box-shadow:0 6px 18px rgba(12,20,40,0.06);margin-top:12px}
+    input[type=file]{display:block}
+    .grid{height:900px;display:grid;grid-template-columns:1fr 750px;gap:12px;margin-top:12px}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{padding:6px;border-bottom:1px solid #eef2f7;text-align:left}
+    th{background:#f3f6fb}
+    .small{font-size:12px;color:#516171}
+    .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef6ff;color:#0b67f5;font-weight:600}
+    .pillImportant{display:inline-block;padding:4px 8px;border-radius:999px;background:#fff9ee;color:#f50b0b;font-weight:600;font-size:xx-large;}
+    .muted{color:#65707a}
+    .section-title{display:flex;align-items:center;justify-content:space-between}
+    .orders{overflow:auto}
+    .order-row{padding:8px;border-radius:8px;border:1px solid #eef2f7;margin-bottom:8px}
+    .negative{color:#c0392b}
+    .positive{color:#0b9444}
+    button{background:#0b67f5;color:white;padding:8px 10px;border-radius:8px;border:0;cursor:pointer}
+    .controls{display:flex;gap:8px;align-items:center}
+    details summary{cursor:pointer;padding:6px}
+    .summary-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+    @media(max-width:980px){.grid{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Transacciones de la cuenta del cliente</h1>
+  </header>
+
+  <div class="card">
+    <div style="display:flex;gap:12px;align-items:center">
+      <input id="file" type="file" accept=".xlsx,.xls" />
+      <div class="controls">
+        <button id="processBtn" disabled>Procesar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div>
+      <div class="specialcard">
+        <div class="section-title"><strong>BLOQUE 1 - PEDIDOS</strong><span class="small muted">Cada pedido con sus movimientos cobros/devoluciones (EAPG) y facturas</span></div>
+        <div id="ordersContainer" class="orders" style="margin-top:10px">Sube un fichero para ver resultados.</div>
+      </div>
+
+
+    </div>
+
+    <div>
+      <div class="card">
+        <div class="section-title"><strong>BLOQUE 2 - Diarios de pagos (DC), devoluciones por POS de ENAB/RMA (DC), Facturas de servicio (ENAB), Notas de abono (EABO)</strong><span class="small muted">Movimientos vinculados</span></div>
+        <div style="margin-top:8px" id="block2Container">—</div>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <div class="section-title"><strong>BLOQUE 3 - Anticipos (FANT)</strong><span class="small muted">Movimientos de anticipo</span></div>
+        <div id="block3Container" style="margin-top:8px">—</div>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <div class="section-title"><strong>SALDO FINAL</strong><span class="small muted">Suma: bloque 1 + bloque 2 + bloque 3</span></div>
+        <div id="finalSummary" style="margin-top:8px">—</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script>
+    // Mapeo flexible de cabeceras: lista de posibles tokens para cada campo
+    const headerTokens = {
+      asiento: ['asiento','nr asiento','journal','entry','asiento '],
+      tipo: ['tipo de transacción','tipo transacción','tipo'],
+      pedido: ['pedido de pago','pedido','payment order','order'],
+      // fecha: ['fecha','date','fecha y hora de creación','fecha y hora','created'],
+      fecha: ['fecha y hora de creación'],
+      factura: ['factura','invoice'],
+      importe: ['importe en divisa de notificación']
+    };
+
+    function mapHeaders(headers){
+      const lower = headers.map(h=>h.toString().toLowerCase());
+      const map = {};
+      for(const key in headerTokens){
+        const tokens = headerTokens[key];
+        for(const t of tokens){
+          const idx = lower.findIndex(h=>h.includes(t));
+          if(idx>=0){ map[key]=idx; break; }
+        }
+      }
+      return map;
+    }
+
+    function parseNumber(v){
+      if(v==null) return 0;
+      let s = v.toString().trim();
+      if(s==='') return 0;
+      // remove currency non-digit except - , .
+      s = s.replace(/[^0-9\-.]/g,'');
+      // if both comma and dot, assume dot thousands, comma decimals if comma after dot? We'll handle common patterns
+      if(s.indexOf(',')>-1 && s.indexOf('.')>-1){
+        // assume dot thousands, remove dots, replace comma with dot
+        s = s.replace(/\./g,'').replace(/,/g,'.');
+      } else if(s.indexOf(',')>-1){
+        // assume comma decimal
+        s = s.replace(/,/g,'.');
+      }
+      const n = parseFloat(s);
+      return isNaN(n)? 0 : n;
+    }
+
+    function parseDate(v){
+      if(!v) return null;
+      // try Date constructor
+      const d1 = new Date(v);
+      if(!isNaN(d1)) return d1;
+      // try dd/mm/yyyy or dd-mm-yyyy
+      const s = v.toString().trim();
+      const m = s.match(/(\d{2})[\/\-](\d{2})[\/\-](\d{4})(.*)?/);
+      if(m){
+        const day = parseInt(m[1],10), month=parseInt(m[2],10)-1, year=parseInt(m[3],10);
+        return new Date(year,month,day);
+      }
+      return null;
+    }
+
+    function isPedidoValido(p){
+      if(!p) return false;
+      const up = p.toString().toUpperCase().trim();
+      if(up==='') return false;
+      if(up.startsWith('ACLI') || up.startsWith('ENAB') || up.startsWith('EABO')) return false;
+      return true;
+    }
+
+    const fileInput = document.getElementById('file');
+    const processBtn = document.getElementById('processBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    let lastWorkbook = null;
+
+    fileInput.addEventListener('change', ()=>{ processBtn.disabled = !fileInput.files.length; });
+
+    processBtn.addEventListener('click', ()=>{
+      const f = fileInput.files[0]; if(!f) return;
+      const reader = new FileReader();
+      reader.onload = (e)=>{
+        const data = e.target.result;
+        const wb = XLSX.read(data,{type:'array'});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const aoa = XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''});
+        if(aoa.length===0) return alert('Hoja vacía');
+        const headers = aoa[0].map(h=>h.toString());
+        const map = mapHeaders(headers);
+
+        // Normalize rows
+        const rows = aoa.slice(1).map((r,idx)=>{
+          return {
+            __rowIndex: idx+2,
+            asiento: (map.asiento!=null? (r[map.asiento]||'').toString() : ''),
+            tipoTrans: (map.tipo!=null? (r[map.tipo]||'').toString() : ''),
+            pedido: (map.pedido!=null? (r[map.pedido]||'').toString() : ''),
+            fechaRaw: (map.fecha!=null? (r[map.fecha]||'').toString() : ''),
+            factura: (map.factura!=null? (r[map.factura]||'').toString() : ''),
+            importeRaw: (map.importe!=null? r[map.importe] : ''),
+          };
+        }).map(r=>({
+          ...r,
+          importe: parseNumber(r.importeRaw),
+          fecha: parseDate(r.fechaRaw) || new Date(0) // fallback very old for stable sorting
+        }));
+
+        // === Bloque 1: Pedidos ===
+        // Collect unique pedidos valid
+        const pedidosSet = new Set();
+        rows.forEach(r=>{ if(isPedidoValido(r.pedido)) pedidosSet.add(r.pedido.toString()); });
+        const pedidos = Array.from(pedidosSet).sort();
+
+        const pedidosResult = pedidos.map(pedidoRef=>{
+          // select rows where asiento starts EAPG or EFAC and where their pedido matches pedidoRef
+          const items = rows.filter(r=>{
+            const asc = (r.asiento||'').toString().toUpperCase();
+            const isE = asc.startsWith('EAPG') || asc.startsWith('EAF');
+            return isE && (r.pedido||'').toString()===pedidoRef;
+          }).map(r=>({
+            asiento: r.asiento, factura: r.factura, importe: r.importe, fecha: r.fecha, rawIndex: r.__rowIndex
+          }));
+          // sort chronologically by fecha then by original index
+          items.sort((a,b)=>{ const d = a.fecha - b.fecha; return d!==0? d : a.rawIndex - b.rawIndex; });
+          const saldo = items.reduce((s,it)=>s + it.importe,0);
+          return {pedido: pedidoRef, items, saldo};
+        });
+
+        // === Bloque 2: DC (asiento starts with DC) OR factura starts with ENAB/EABO ===
+        const block2Items = rows.filter(r=>{
+          const asc = (r.asiento||'').toString().toUpperCase();
+          const fac = (r.factura||'').toString().toUpperCase();
+          const cond = asc.startsWith('DC') || fac.startsWith('ENAB') || fac.startsWith('EABO');
+          return cond;
+        }).map(r=>({asiento:r.asiento,factura:r.factura,importe:r.importe,fecha:r.fecha, rawIndex: r.__rowIndex}));
+        block2Items.sort((a,b)=>{ const d = a.fecha - b.fecha; return d!==0? d : a.rawIndex - b.rawIndex; });
+        const block2Saldo = block2Items.reduce((s,it)=>s + it.importe,0);
+
+
+        // === Bloque 3: Anticipos (asiento empieza por FANT) ===
+        const block3Items = rows.filter(r=>{
+          const asc = (r.asiento||'').toString().toUpperCase();
+          return asc.startsWith('FANT');
+        }).map(r=>({
+          asiento:r.asiento,
+          factura:r.factura,
+          importe:r.importe,
+          fecha:r.fecha,
+          rawIndex: r.__rowIndex
+        }));
+
+        block3Items.sort((a,b)=>{
+          const d = a.fecha - b.fecha;
+          return d!==0 ? d : a.rawIndex - b.rawIndex;
+        });
+
+        const block3Saldo = block3Items.reduce((s,it)=>s + it.importe,0);
+
+        // === Bloque 4: suma de saldos pedidos + bloque2 ===
+        const sumaPedidos = pedidosResult.reduce((s,p)=>s + p.saldo,0);
+        const saldoCombinado = sumaPedidos + block2Saldo + block3Saldo;
+
+        // render UI
+        renderPedidos(pedidosResult);
+        renderBlock2(block2Items, block2Saldo);
+        renderBlock3(block3Items, block3Saldo);
+        renderFinal(sumaPedidos, block2Saldo + block3Saldo, saldoCombinado);
+
+        // prepare workbook for download
+        lastWorkbook = buildWorkbook(pedidosResult, block2Items, {sumaPedidos, block2Saldo, saldoCombinado});
+        //downloadBtn.disabled = false;
+      };
+      reader.readAsArrayBuffer(f);
+    });
+
+    function formatMoney(n){ return Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+    function renderPedidos(pedidosResult){
+      const c = document.getElementById('ordersContainer');
+      if(!pedidosResult || pedidosResult.length===0){ c.innerHTML = '<div class="small muted">No se encontraron pedidos válidos con movimientos EAPG/EFAC.</div>'; return; }
+      c.innerHTML = pedidosResult.map(p=>{
+        const saldoClass = p.saldo < 0 ? 'negative' : (p.saldo>0? 'positive':'');
+        const rowsHtml = p.items.map(it=>`<tr><td>${it.fecha && it.fecha.getTime()>0 ? it.fecha.toLocaleString() : ''}</td><td>${escapeHtml(it.asiento)}</td><td>${escapeHtml(it.factura != "" ? "Factura " + it.factura + " 📦" : it.importe > 0 ? "Devolución/Cambio 💶" : "Cobro 💶")}</td><td style="text-align:right">${formatMoney(it.importe)}</td></tr>`).join('');
+        return `<details class="order-row"><summary><strong>Pedido:</strong> ${escapeHtml(p.pedido)} <span class="pill">Saldo: <span class='${saldoClass}'>${formatMoney(p.saldo)}</span></span></summary><div style="padding:8px"><table><thead><tr><th>Fecha</th><th>Asiento</th><th>Factura</th><th>Importe</th></tr></thead><tbody>${rowsHtml}</tbody></table></div></details>`;
+      }).join('\n');
+    }
+
+    function renderBlock2(items, saldo){
+      const el = document.getElementById('block2Container');
+      if(!items || items.length===0){ el.innerHTML = '<div class="small muted">No hay movimientos DC/ENAB/EABO.</div>'; return; }
+      const rowsHtml = items.map(it=>`<tr><td>${it.fecha && it.fecha.getTime()>0? it.fecha.toLocaleString(): ''}</td><td>${escapeHtml(it.asiento)}</td><td>${escapeHtml(it.factura.includes("EABO") ? "(RMA) " + it.factura + " 📦" : it.factura.includes("ENAB") ? it.factura + " 🏷️" : it.importe > 0 ? "Devolución 💶" : "Cobro 💶")}</td><td style="text-align:right">${formatMoney(it.importe)}</td></tr>`).join('');
+      el.innerHTML = `<div style="overflow:auto;max-height:320px"><table><thead><tr><th>Fecha</th><th>Asiento</th><th>Factura</th><th>Importe</th></tr></thead><tbody>${rowsHtml}</tbody></table></div><div style="margin-top:8px">Saldo bloque: <strong>${formatMoney(saldo)}</strong></div>`;
+    }
+
+    function renderBlock3(items, saldo){
+      const el = document.getElementById('block3Container');
+      if(!items || items.length===0){
+        el.innerHTML = '<div class="small muted">No hay anticipos (FANT).</div>';
+        return;
+      }
+
+      const rowsHtml = items.map(it =>
+        `<tr>
+          <td>${it.fecha && it.fecha.getTime()>0 ? it.fecha.toLocaleString(): ''}</td>
+          <td>${escapeHtml(it.asiento)}</td>
+          <td>${escapeHtml(it.factura)}</td>
+          <td style="text-align:right">${formatMoney(it.importe)}</td>
+        </tr>`
+      ).join('');
+
+      el.innerHTML = `
+        <div style="overflow:auto;max-height:320px">
+          <table>
+            <thead><tr><th>Fecha</th><th>Asiento</th><th>Factura</th><th>Importe</th></tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
+        <div style="margin-top:8px">Saldo bloque: <strong>${formatMoney(saldo)}</strong> - Debe coincidir con el importe de los productos, servicios y gastos pendientes de facturar.</div>`;
+    }
+
+
+    function renderFinal(sumaPedidos, block2Saldo, combinado){ // pillImportant
+      const el = document.getElementById('finalSummary');
+      const label = combinado < 0 ? 'saldo acreedor' : 'saldo deudor';
+      if(combinado < 0) el.innerHTML = `<div><strong>Saldo combinado:</strong> <span class="pill">${formatMoney(combinado)}</span></div><div class="muted">Interpretación: <strong>${label}</strong></div>`;
+      else el.innerHTML = `<div><strong>Saldo combinado:</strong> <span class="pillImportant">${formatMoney(combinado)}</span></div><div class="muted">Interpretación: <strong>${label}</strong></div>`;
+    }
+
+    function escapeHtml(s){ return (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    function buildWorkbook(pedidosResult, block2Items, totals){
+      const wb = XLSX.utils.book_new();
+      // sheet: pedidos resumen
+      const pedidosAoa = [['Pedido','Fecha','Asiento','Factura','Importe']];
+      pedidosResult.forEach(p=>{
+        p.items.forEach(it=> pedidosAoa.push([p.pedido, it.fecha && it.fecha.getTime()>0? it.fecha.toISOString() : '', it.asiento, it.factura, it.importe]));
+        pedidosAoa.push(['','Saldo pedido','', '', p.saldo]);
+      });
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(pedidosAoa), 'PEDIDOS');
+
+      // sheet: bloque2
+      const b2 = [['Fecha','Asiento','Factura','Importe']].concat(block2Items.map(it=>[it.fecha && it.fecha.getTime()>0? it.fecha.toISOString() : '', it.asiento, it.factura, it.importe]));
+      b2.push([]); b2.push(['Saldo bloque 2', totals.block2Saldo || '' ]);
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(b2), 'BLOQUE_2');
+
+      // sheet: totales
+      const tot = [['Concepto','Importe'],['Suma saldos pedidos', totals.sumaPedidos || 0], ['Saldo bloque 2', totals.block2Saldo || 0], ['Saldo combinado', totals.saldoCombinado || 0]];
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(tot), 'TOTALES');
+
+      return wb;
+    }
+
+  </script>
+</body>
+</html>
+
