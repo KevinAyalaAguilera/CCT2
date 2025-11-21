@@ -20,13 +20,13 @@
     th{background:#f3f6fb}
     .small{font-size:12px;color:#516171}
     .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef6ff;color:#0b67f5;font-weight:600}
-    .pillImportant{display:inline-block;padding:4px 8px;border-radius:999px;background:#fff9ee;color:#f50b0b;font-weight:600;font-size:xx-large;}
+    .important{display:inline-block;padding:4px 8px;border-radius:999px;font-weight:600;font-size:xx-large;}
     .muted{color:#65707a}
     .section-title{display:flex;align-items:center;justify-content:space-between}
     .orders{overflow:auto}
     .order-row{padding:8px;border-radius:8px;border:1px solid #eef2f7;margin-bottom:8px}
-    .negative{color:#c0392b}
-    .positive{color:#0b9444}
+    .negative{color:rgb(0, 0, 0); background-color: rgb(255, 0, 0);}
+    .positive{color:rgb(255, 255, 255); background-color: rgb(0, 155, 0);}
     button{background:#0b67f5;color:white;padding:8px 10px;border-radius:8px;border:0;cursor:pointer}
     .controls{display:flex;gap:8px;align-items:center}
     details summary{cursor:pointer;padding:6px}
@@ -251,21 +251,25 @@
       const c = document.getElementById('ordersContainer');
       if(!pedidosResult || pedidosResult.length===0){ c.innerHTML = '<div class="small muted">No se encontraron pedidos válidos con movimientos EAPG/EFAC.</div>'; return; }
       c.innerHTML = pedidosResult.map(p=>{
-        const saldoClass = p.saldo < 0 ? 'negative' : (p.saldo>0? 'positive':'');
+        const saldoClass = p.saldo > 0 ? 'negative' : (p.saldo < 0? 'positive':'');
         const rowsHtml = p.items.map(it=>`<tr><td>${it.fecha && it.fecha.getTime()>0 ? it.fecha.toLocaleString() : ''}</td><td>${escapeHtml(it.asiento)}</td><td>${escapeHtml(it.factura != "" ? "Factura " + it.factura + " 📦" : it.importe > 0 ? "Devolución/Cambio 💶" : "Cobro 💶")}</td><td style="text-align:right">${formatMoney(it.importe)}</td></tr>`).join('');
-        return `<details class="order-row"><summary><strong>Pedido:</strong> ${escapeHtml(p.pedido)} <span class="pill">Saldo: <span class='${saldoClass}'>${formatMoney(p.saldo)}</span></span></summary><div style="padding:8px"><table><thead><tr><th>Fecha</th><th>Asiento</th><th>Factura</th><th>Importe</th></tr></thead><tbody>${rowsHtml}</tbody></table></div></details>`;
+        return `<details class="order-row"><summary><strong>Pedido:</strong> ${escapeHtml(p.pedido)} <span class="pill ${saldoClass}">Saldo: <span class=''>${formatMoney(p.saldo)}</span></span></summary><div style="padding:8px"><table><thead><tr><th>Fecha</th><th>Asiento</th><th>Factura</th><th>Importe</th></tr></thead><tbody>${rowsHtml}</tbody></table></div></details>`;
       }).join('\n');
     }
 
     function renderBlock2(items, saldo){
       const el = document.getElementById('block2Container');
       if(!items || items.length===0){ el.innerHTML = '<div class="small muted">No hay movimientos DC/ENAB/EABO.</div>'; return; }
+      let saldoClass = saldo > 0 ? 'negative' : saldo < 0 ? 'positive': '';
+      if (saldo < 0.001 && saldo > -0.001) saldoClass = "";
       const rowsHtml = items.map(it=>`<tr><td>${it.fecha && it.fecha.getTime()>0? it.fecha.toLocaleString(): ''}</td><td>${escapeHtml(it.asiento)}</td><td>${escapeHtml(it.factura.includes("EABO") ? "(RMA) " + it.factura + " 📦" : it.factura.includes("ENAB") ? it.factura + " 🏷️" : it.importe > 0 ? "Devolución 💶" : "Cobro 💶")}</td><td style="text-align:right">${formatMoney(it.importe)}</td></tr>`).join('');
-      el.innerHTML = `<div style="overflow:auto;max-height:320px"><table><thead><tr><th>Fecha</th><th>Asiento</th><th>Factura</th><th>Importe</th></tr></thead><tbody>${rowsHtml}</tbody></table></div><div style="margin-top:8px">Saldo bloque: <strong>${formatMoney(saldo)}</strong></div>`;
+      el.innerHTML = `<div style="overflow:auto;max-height:320px"><table><thead><tr><th>Fecha</th><th>Asiento</th><th>Factura</th><th>Importe</th></tr></thead><tbody>${rowsHtml}</tbody></table></div><div style="margin-top:8px"><span class='pill ${saldoClass}'>Saldo bloque: <strong>${formatMoney(saldo)}</strong></span></div>`;
     }
 
     function renderBlock3(items, saldo){
       const el = document.getElementById('block3Container');
+      let saldoClass = saldo > 0 ? 'negative' : saldo < 0 ? 'positive': '';
+      if (saldo < 0.001 && saldo > -0.001) saldoClass = "";
       if(!items || items.length===0){
         el.innerHTML = '<div class="small muted">No hay anticipos (FANT).</div>';
         return;
@@ -287,15 +291,19 @@
             <tbody>${rowsHtml}</tbody>
           </table>
         </div>
-        <div style="margin-top:8px">Saldo bloque: <strong>${formatMoney(saldo)}</strong> - Debe coincidir con el importe de los productos, servicios y gastos pendientes de facturar.</div>`;
+        <div style="margin-top:8px"><span class="pill ${saldoClass}">Saldo bloque: <strong>${formatMoney(saldo)}</strong></span> - Debe coincidir con el importe de los productos, servicios y gastos pendientes de facturar.</div>`;
     }
 
 
     function renderFinal(sumaPedidos, block2Saldo, combinado){ // pillImportant
       const el = document.getElementById('finalSummary');
-      const label = combinado < 0 ? 'saldo acreedor' : 'saldo deudor';
-      if(combinado < 0) el.innerHTML = `<div><strong>Saldo combinado:</strong> <span class="pill">${formatMoney(combinado)}</span></div><div class="muted">Interpretación: <strong>${label}</strong></div>`;
-      else el.innerHTML = `<div><strong>Saldo combinado:</strong> <span class="pillImportant">${formatMoney(combinado)}</span></div><div class="muted">Interpretación: <strong>${label}</strong></div>`;
+      let label = combinado < 0 ? 'saldo acreedor' : 'saldo deudor';
+      if (combinado < 0.001 && combinado > -0.001) label = 'cuenta saldada';
+
+      let saldoClass = combinado > 0 ? 'negative' : combinado < 0 ? 'positive': '';
+      if (combinado < 0.001 && combinado > -0.001) saldoClass = "";
+
+      el.innerHTML = `<div><strong>Saldo combinado:</strong> <span class="pill ${saldoClass} important">${formatMoney(combinado)}</span></div><div class="muted">Interpretación: <strong>${label}</strong></div>`;
     }
 
     function escapeHtml(s){ return (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
